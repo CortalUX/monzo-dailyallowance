@@ -1,0 +1,1428 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "workflows_end_of_month_name": {
+            "defaultValue": "monzo-dailyallowance",
+            "type": "String"
+        },
+        "customApis_monzo_connector_name": {
+            "defaultValue": "monzo-connector",
+            "type": "String"
+        },
+        "connections_monzo_connector_name": {
+            "defaultValue": "monzo-connector",
+            "type": "String"
+        },
+        "amount_daily_allowance": {
+            "defaultValue": "",
+            "type": "String",
+            "metadata": {
+                "description": "This is the allowance you will be paid daily - expressed with the final two digits representing pence after the decimal point." 
+            }
+        },
+        "amount_for_bills":{
+            "defaultValue": "",
+            "type": "String",
+            "metadata": {
+                "description": "This is the total that you need left in your account for bills - expressed with the final two digits representing pence after the decimal point." 
+            }
+        },
+        "monzo_account_id":{
+            "defaultValue": "acc_xyz",
+            "type": "String",
+            "metadata": {
+                "description": "This is your monzo account ID, found in the developer portal." 
+            }
+        },
+        "pot_id_savings":{
+            "defaultValue": "pot_xyz1",
+            "type": "String",
+            "metadata": {
+                "description": "This is the pot ID for your savings - any money that is to be set aside at the start and end of each month." 
+            }
+        },
+        "pot_id_operating_income":{
+            "defaultValue": "pot_xyz2",
+            "type": "String",
+            "metadata": {
+                "description": "This is the pot ID for your operating income - the pot your daily allowance is paid from." 
+            }
+        },
+        "oauth_client_secret":{
+            "defaultValue":"mnzconf._",
+            "type": "string",
+            "metadata": {
+                "description":"This is the oauth client secret created in the Monzo developer portal."
+            }
+        }
+    },
+    "variables": {},
+    "resources": [
+        {
+            "type": "Microsoft.Logic/workflows",
+            "name": "[parameters('workflows_end_of_month_name')]",
+            "apiVersion": "2017-07-01",
+            "location": "uksouth",
+            "tags": {},
+            "scale": null,
+            "properties": {
+                "state": "Enabled",
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                        "$connections": {
+                            "defaultValue": {},
+                            "type": "Object"
+                        }
+                    },
+                    "triggers": {
+                        "Recurrence": {
+                            "recurrence": {
+                                "frequency": "Day",
+                                "interval": 1,
+                                "schedule": {
+                                    "hours": [
+                                        6
+                                    ]
+                                },
+                                "startTime": "2018-08-31T00:00:00Z",
+                                "timeZone": "GMT Standard Time"
+                            },
+                            "type": "Recurrence",
+                            "runtimeConfiguration": {
+                                "concurrency": {
+                                    "runs": 1
+                                }
+                            }
+                        }
+                    },
+                    "actions": {
+                        "Balance": {
+                            "runAfter": {
+                                "Get_Pot_Data": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "ApiConnection",
+                            "inputs": {
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['monzo-connector']['connectionId']"
+                                    }
+                                },
+                                "method": "get",
+                                "path": "/balance",
+                                "queries": {
+                                    "account_id": "@{outputs('AccountID')}"
+                                }
+                            }
+                        },
+                        "Configuration": {
+                            "actions": {
+                                "AmountForBills": {
+                                    "runAfter": {
+                                        "DailyAllowance": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "Compose",
+                                    "inputs": 1000
+                                },
+                                "DailyAllowance": {
+                                    "runAfter": {},
+                                    "type": "Compose",
+                                    "inputs": 1000
+                                }
+                            },
+                            "runAfter": {},
+                            "type": "Scope"
+                        },
+                        "DailyAllowanceMultipliedByDaysInMonth": {
+                            "runAfter": {
+                                "Settings": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Compose",
+                            "inputs": "@mul(int(subtractFromTime(addToTime(startOfMonth(getFutureTime(1,'Day')),1,'Month'),2,'Day','dd')),outputs('DailyAllowance'))"
+                        },
+                        "Get_Pot_Data": {
+                            "actions": {
+                                "ListPots": {
+                                    "runAfter": {},
+                                    "type": "ApiConnection",
+                                    "inputs": {
+                                        "host": {
+                                            "connection": {
+                                                "name": "@parameters('$connections')['monzo-connector']['connectionId']"
+                                            }
+                                        },
+                                        "method": "get",
+                                        "path": "/pots"
+                                    }
+                                },
+                                "ListPotsToJson": {
+                                    "runAfter": {
+                                        "ListPots": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "ParseJson",
+                                    "inputs": {
+                                        "content": "@body('ListPots')",
+                                        "schema": {
+                                            "properties": {
+                                                "pots": {
+                                                    "items": {
+                                                        "properties": {
+                                                            "balance": {
+                                                                "type": "integer"
+                                                            },
+                                                            "created": {
+                                                                "type": "string"
+                                                            },
+                                                            "currency": {
+                                                                "type": "string"
+                                                            },
+                                                            "deleted": {
+                                                                "type": "boolean"
+                                                            },
+                                                            "id": {
+                                                                "type": "string"
+                                                            },
+                                                            "maximum_balance": {
+                                                                "type": "integer"
+                                                            },
+                                                            "minimum_balance": {
+                                                                "type": "integer"
+                                                            },
+                                                            "name": {
+                                                                "type": "string"
+                                                            },
+                                                            "round_up": {
+                                                                "type": "boolean"
+                                                            },
+                                                            "style": {
+                                                                "type": "string"
+                                                            },
+                                                            "type": {
+                                                                "type": "string"
+                                                            },
+                                                            "updated": {
+                                                                "type": "string"
+                                                            }
+                                                        },
+                                                        "required": [
+                                                            "id",
+                                                            "name",
+                                                            "style",
+                                                            "balance",
+                                                            "currency",
+                                                            "type",
+                                                            "minimum_balance",
+                                                            "maximum_balance",
+                                                            "round_up",
+                                                            "created",
+                                                            "updated",
+                                                            "deleted"
+                                                        ],
+                                                        "type": "object"
+                                                    },
+                                                    "type": "array"
+                                                }
+                                            },
+                                            "type": "object"
+                                        }
+                                    }
+                                },
+                                "OperatingIncomePot": {
+                                    "runAfter": {
+                                        "ListPotsToJson": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "Query",
+                                    "inputs": {
+                                        "from": "@body('ListPotsToJson')?['pots']",
+                                        "where": "@equals(item()?['id'], outputs('OperatingIncomePotID'))"
+                                    }
+                                },
+                                "SavingsPot": {
+                                    "runAfter": {
+                                        "OperatingIncomePot": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "Query",
+                                    "inputs": {
+                                        "from": "@body('ListPotsToJson')?['pots']",
+                                        "where": "@equals(item()?['id'], outputs('SavingsPotID'))"
+                                    }
+                                }
+                            },
+                            "runAfter": {
+                                "OperatingIncomeAmount": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Scope"
+                        },
+                        "Is_it_the_last_day_of_the_month": {
+                            "actions": {
+                                "Move_excess_monies_to_savings": {
+                                    "actions": {
+                                        "AccountBalanceDifference": {
+                                            "runAfter": {
+                                                "Refresh_Balance": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "Compose",
+                                            "inputs": "@sub(sub(body('Refresh_Balance')?['balance'],outputs('AmountForBills')),outputs('DailyAllowance'))"
+                                        },
+                                        "Enough_money_for_saving": {
+                                            "actions": {
+                                                "Deposit_into_a_pot_-_Saving": {
+                                                    "runAfter": {},
+                                                    "type": "ApiConnection",
+                                                    "inputs": {
+                                                        "body": "source_account_id=@{outputs('AccountID')}&amount=@{outputs('AccountBalanceDifference')}&dedupe_id=@{guid()}",
+                                                        "headers": {
+                                                            "Content-Type": " application/x-www-form-urlencoded"
+                                                        },
+                                                        "host": {
+                                                            "connection": {
+                                                                "name": "@parameters('$connections')['monzo-connector']['connectionId']"
+                                                            }
+                                                        },
+                                                        "method": "put",
+                                                        "path": "/pots/@{encodeURIComponent(outputs('SavingsPotID'))}/deposit"
+                                                    }
+                                                }
+                                            },
+                                            "runAfter": {
+                                                "AccountBalanceDifference": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "else": {
+                                                "actions": {
+                                                    "Exact_amount_in_the_account": {
+                                                        "actions": {},
+                                                        "runAfter": {},
+                                                        "else": {
+                                                            "actions": {
+                                                                "FeedItem_-_Not_enough_money_for_bills": {
+                                                                    "runAfter": {},
+                                                                    "type": "ApiConnection",
+                                                                    "inputs": {
+                                                                        "body": "account_id=@{outputs('AccountID')}&type=basic&params[title]=Bill%20Money&params[image_url]=https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Achtung.svg/1200px-Achtung.svg.png&params[body]=You're+missing+%C2%A3@{div(mul(outputs('AccountBalanceDifference'),-1),100)}+for+your+upcoming+bills.+You+asked+for+bill+money+of+%C2%A3@{div(outputs('AmountForBills'),100)}.",
+                                                                        "headers": {
+                                                                            "Content-Type": " application/x-www-form-urlencoded"
+                                                                        },
+                                                                        "host": {
+                                                                            "connection": {
+                                                                                "name": "@parameters('$connections')['monzo-connector']['connectionId']"
+                                                                            }
+                                                                        },
+                                                                        "method": "post",
+                                                                        "path": "/feed"
+                                                                    }
+                                                                }
+                                                            }
+                                                        },
+                                                        "expression": {
+                                                            "and": [
+                                                                {
+                                                                    "equals": [
+                                                                        "@outputs('AccountBalanceDifference')",
+                                                                        0
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        "type": "If"
+                                                    }
+                                                }
+                                            },
+                                            "expression": {
+                                                "and": [
+                                                    {
+                                                        "greater": [
+                                                            "@outputs('AccountBalanceDifference')",
+                                                            0
+                                                        ]
+                                                    }
+                                                ]
+                                            },
+                                            "type": "If"
+                                        },
+                                        "Refresh_Balance": {
+                                            "runAfter": {},
+                                            "type": "ApiConnection",
+                                            "inputs": {
+                                                "host": {
+                                                    "connection": {
+                                                        "name": "@parameters('$connections')['monzo-connector']['connectionId']"
+                                                    }
+                                                },
+                                                "method": "get",
+                                                "path": "/balance",
+                                                "queries": {
+                                                    "account_id": "@{outputs('AccountID')}"
+                                                }
+                                            }
+                                        }
+                                    },
+                                    "runAfter": {
+                                        "Top_up_Operating_Income": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "Scope"
+                                },
+                                "Top_up_Operating_Income": {
+                                    "actions": {
+                                        "Greater_than_0_difference": {
+                                            "actions": {
+                                                "Balance_enough_to_pay_OI": {
+                                                    "actions": {
+                                                        "Deposit_into_a_pot_-_OI": {
+                                                            "runAfter": {},
+                                                            "type": "ApiConnection",
+                                                            "inputs": {
+                                                                "body": "source_account_id=@{outputs('AccountID')}&amount=@{outputs('OperatingIncomeDifference')}&dedupe_id=@{guid()}",
+                                                                "headers": {
+                                                                    "Content-Type": " application/x-www-form-urlencoded"
+                                                                },
+                                                                "host": {
+                                                                    "connection": {
+                                                                        "name": "@parameters('$connections')['monzo-connector']['connectionId']"
+                                                                    }
+                                                                },
+                                                                "method": "put",
+                                                                "path": "/pots/@{encodeURIComponent(outputs('OperatingIncomePotID'))}/deposit"
+                                                            }
+                                                        }
+                                                    },
+                                                    "runAfter": {},
+                                                    "else": {
+                                                        "actions": {
+                                                            "FeedItem_-_Can't_pay_OI": {
+                                                                "runAfter": {},
+                                                                "type": "ApiConnection",
+                                                                "inputs": {
+                                                                    "body": "account_id=@{outputs('AccountID')}&type=basic&params[title]=❌Operating%20income!❌&params[image_url]=https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Achtung.svg/1200px-Achtung.svg.png&params[body]=Your+balance+isn't+high+enough+to+pay+your+operating+income+of+%C2%A3@{div(outputs('OperatingIncomeAmount'),100)}+for+this+month!+You+are+missing+%C2%A3@{div(mul(outputs('OperatingIncomeDifference'),1),100)}.",
+                                                                    "headers": {
+                                                                        "Content-Type": " application/x-www-form-urlencoded"
+                                                                    },
+                                                                    "host": {
+                                                                        "connection": {
+                                                                            "name": "@parameters('$connections')['monzo-connector']['connectionId']"
+                                                                        }
+                                                                    },
+                                                                    "method": "post",
+                                                                    "path": "/feed"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    "expression": {
+                                                        "and": [
+                                                            {
+                                                                "greaterOrEquals": [
+                                                                    "@body('Balance')?['balance']",
+                                                                    "@outputs('OperatingIncomeDifference')"
+                                                                ]
+                                                            }
+                                                        ]
+                                                    },
+                                                    "type": "If"
+                                                }
+                                            },
+                                            "runAfter": {
+                                                "OperatingIncomeDifference": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "expression": {
+                                                "and": [
+                                                    {
+                                                        "greater": [
+                                                            "@outputs('OperatingIncomeDifference')",
+                                                            0
+                                                        ]
+                                                    }
+                                                ]
+                                            },
+                                            "type": "If"
+                                        },
+                                        "OperatingIncomeDifference": {
+                                            "runAfter": {},
+                                            "type": "Compose",
+                                            "inputs": "@sub(body('Balance')?['balance'],outputs('OperatingIncomeAmount'))"
+                                        }
+                                    },
+                                    "runAfter": {},
+                                    "type": "Scope"
+                                }
+                            },
+                            "runAfter": {
+                                "Balance": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "expression": {
+                                "or": [
+                                    {
+                                        "equals": [
+                                            "@getFutureTime(1,'Day','dd')",
+                                            "01"
+                                        ]
+                                    }
+                                ]
+                            },
+                            "type": "If"
+                        },
+                        "OperatingIncomeAmount": {
+                            "runAfter": {
+                                "DailyAllowanceMultipliedByDaysInMonth": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Compose",
+                            "inputs": "@outputs('DailyAllowanceMultipliedByDaysInMonth')",
+                            "description": "Should probably be moved (along with multiplier) out of config"
+                        },
+                        "Pay_Daily_Allowance": {
+                            "actions": {
+                                "For_each": {
+                                    "foreach": "@body('OperatingIncomePot')",
+                                    "actions": {
+                                        "Condition": {
+                                            "actions": {
+                                                "Daily_Allowance_Withdrawal": {
+                                                    "runAfter": {},
+                                                    "type": "ApiConnection",
+                                                    "inputs": {
+                                                        "body": "destination_account_id=@{outputs('AccountID')}&amount=@{outputs('DailyAllowance')}&dedupe_id=@{guid()}",
+                                                        "headers": {
+                                                            "Content-Type": " application/x-www-form-urlencoded"
+                                                        },
+                                                        "host": {
+                                                            "connection": {
+                                                                "name": "@parameters('$connections')['monzo-connector']['connectionId']"
+                                                            }
+                                                        },
+                                                        "method": "put",
+                                                        "path": "/pots/@{encodeURIComponent(outputs('OperatingIncomePotID'))}/withdraw"
+                                                    }
+                                                }
+                                            },
+                                            "runAfter": {},
+                                            "else": {
+                                                "actions": {
+                                                    "FeedItem_-_Can't_pay_daily_allowance!": {
+                                                        "runAfter": {},
+                                                        "type": "ApiConnection",
+                                                        "inputs": {
+                                                            "body": "account_id=@{outputs('AccountID')}&type=basic&params[title]=❌Daily%20allowance!❌&params[image_url]=https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Achtung.svg/1200px-Achtung.svg.png&params[body]=Your+operating+income+isn't+high+enough+to+pay+your+daily+allowance+of+%C2%A3@{div(outputs('DailyAllowance'),100)}.",
+                                                            "headers": {
+                                                                "Content-Type": " application/x-www-form-urlencoded"
+                                                            },
+                                                            "host": {
+                                                                "connection": {
+                                                                    "name": "@parameters('$connections')['monzo-connector']['connectionId']"
+                                                                }
+                                                            },
+                                                            "method": "post",
+                                                            "path": "/feed"
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            "expression": {
+                                                "and": [
+                                                    {
+                                                        "greaterOrEquals": [
+                                                            "@items('For_each')?['balance']",
+                                                            "@outputs('DailyAllowance')"
+                                                        ]
+                                                    },
+                                                    {
+                                                        "not": {
+                                                            "equals": [
+                                                                "@getFutureTime(1,'Day','dd')",
+                                                                "01"
+                                                            ]
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            "type": "If"
+                                        }
+                                    },
+                                    "runAfter": {},
+                                    "type": "Foreach"
+                                }
+                            },
+                            "runAfter": {
+                                "Is_it_the_last_day_of_the_month": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Scope"
+                        },
+                        "Settings": {
+                            "actions": {
+                                "AccountID": {
+                                    "runAfter": {},
+                                    "type": "Compose",
+                                    "inputs": "acc_"
+                                },
+                                "OperatingIncomePotID": {
+                                    "runAfter": {
+                                        "SavingsPotID": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "Compose",
+                                    "inputs": "pot_"
+                                },
+                                "SavingsPotID": {
+                                    "runAfter": {
+                                        "AccountID": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "Compose",
+                                    "inputs": "pot_"
+                                }
+                            },
+                            "runAfter": {
+                                "Configuration": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Scope"
+                        }
+                    },
+                    "outputs": {}
+                },
+                "parameters": {
+                    "$connections": {
+                        "value": {
+                            "monzo-connector": {
+                                "connectionId": "[resourceId('Microsoft.Web/connections', parameters('connections_monzo_connector_name'))]",
+                                "connectionName": "monzo-connector",
+                                "id": "[resourceId('Microsoft.Web/customApis', parameters('customApis_monzo_connector_name'))]"
+                            }
+                        }
+                    }
+                }
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/connections', parameters('connections_monzo_connector_name'))]",
+                "[resourceId('Microsoft.Web/customApis', parameters('customApis_monzo_connector_name'))]"
+            ]
+        },
+        {
+            "type": "Microsoft.Web/connections",
+            "name": "[parameters('connections_monzo_connector_name')]",
+            "apiVersion": "2016-06-01",
+            "location": "uksouth",
+            "scale": null,
+            "properties": {
+                "displayName": "[parameters('connections_monzo_connector_name')]",
+                "customParameterValues": {},
+                "api": {
+                    "id": "[resourceId('Microsoft.Web/customApis', parameters('customApis_monzo_connector_name'))]"
+                }
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/customApis', parameters('customApis_monzo_connector_name'))]"
+            ]
+        },
+        {
+            "type": "Microsoft.Web/customApis",
+            "name": "[parameters('customApis_monzo_connector_name')]",
+            "apiVersion": "2016-06-01",
+            "location": "uksouth",
+            "scale": null,
+            "properties": {
+                "connectionParameters": {
+                    "api_key": {
+                        "type": "securestring",
+                        "uiDefinition": {
+                            "displayName": "Authorization",
+                            "description": "Your access token from the Monzo developer portal.",
+                            "tooltip": "Provide your access token.",
+                            "constraints": {
+                                "tabIndex": 2,
+                                "clearText": false,
+                                "required": "true"
+                            }
+                        }
+                    }
+                },
+                "description": "Monzo",
+                "displayName": "[parameters('customApis_monzo_connector_name')]",
+                "backendService": {
+                    "serviceUrl": "https://api.monzo.com/"
+                  },
+                "iconUri": "data:image/jpeg;base64,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AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/2Q==",
+                "swagger":{
+                    "swagger": "2.0",
+                    "info": {
+                        "version": "1.0.0",
+                        "title": "Monzo",
+                        "description": "Monzo"
+                    },
+                    "host": "api.monzo.com",
+                    "basePath": "/",
+                    "schemes": [
+                        "https"
+                    ],
+                    "consumes": [],
+                    "produces": [
+                        "application/json"
+                    ],
+                    "paths": {
+                        "/balance": {
+                        "get": {
+                            "summary": "Balance",
+                            "description": "Retrieve information about an account’s balance.",
+                            "operationId": "Balance",
+                            "parameters": [
+                            {
+                                "name": "account_id",
+                                "default": "{{account_id}}",
+                                "in": "query",
+                                "type": "string",
+                                "required": true
+                            }
+                            ],
+                            "responses": {
+                            "200": {
+                                "description": "200",
+                                "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "balance": {
+                                    "type": "integer",
+                                    "format": "int32",
+                                    "description": "balance"
+                                    },
+                                    "total_balance": {
+                                    "type": "integer",
+                                    "format": "int32",
+                                    "description": "total_balance"
+                                    },
+                                    "currency": {
+                                    "type": "string",
+                                    "description": "currency"
+                                    },
+                                    "spend_today": {
+                                    "type": "integer",
+                                    "format": "int32",
+                                    "description": "spend_today"
+                                    },
+                                    "local_currency": {
+                                    "type": "string",
+                                    "description": "local_currency"
+                                    },
+                                    "local_exchange_rate": {
+                                    "type": "number",
+                                    "format": "float",
+                                    "description": "local_exchange_rate"
+                                    },
+                                    "local_spend": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    },
+                                    "description": "local_spend"
+                                    }
+                                }
+                                }
+                            }
+                            }
+                        }
+                        },
+                        "/ping/whoami": {
+                        "get": {
+                            "summary": "WhoAmI",
+                            "description": "To get information about an access token, you can call the /ping/whoami endpoint.",
+                            "operationId": "WhoAmI",
+                            "parameters": [],
+                            "responses": {
+                            "200": {
+                                "description": "200",
+                                "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "authenticated": {
+                                    "type": "boolean",
+                                    "description": "authenticated"
+                                    },
+                                    "client_id": {
+                                    "type": "string",
+                                    "description": "client_id"
+                                    },
+                                    "user_id": {
+                                    "type": "string",
+                                    "description": "user_id"
+                                    }
+                                }
+                                }
+                            }
+                            }
+                        }
+                        },
+                        "/pots/{pot_id}/deposit": {
+                        "put": {
+                            "summary": "Deposit into a pot",
+                            "description": "Move money from an account owned by the currently authorised user into one of their pots.",
+                            "operationId": "DepositIntoAPot",
+                            "parameters": [
+                            {
+                                "name": "pot_id",
+                                "default": "{{pot_id}}",
+                                "in": "path",
+                                "type": "string",
+                                "required": true
+                            },
+                            {
+                                "name": "Content-Type",
+                                "in": "header",
+                                "required": true,
+                                "type": "string",
+                                "default": " application/x-www-form-urlencoded",
+                                "description": "Content-Type"
+                            },
+                            {
+                                "name": "body",
+                                "in": "body",
+                                "schema": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                    "key": {
+                                        "type": "string",
+                                        "description": "key"
+                                    },
+                                    "value": {
+                                        "type": "string",
+                                        "description": "value"
+                                    },
+                                    "description": {
+                                        "type": "string",
+                                        "description": "description"
+                                    },
+                                    "type": {
+                                        "type": "string",
+                                        "description": "type"
+                                    },
+                                    "enabled": {
+                                        "type": "boolean",
+                                        "description": "enabled"
+                                    }
+                                    },
+                                    "default": {
+                                    "key": "dedupe_id",
+                                    "value": "{{$guid}}",
+                                    "description": "A unique string used to de-duplicate deposits. Ensure this remains static between retries to ensure only one deposit is created.",
+                                    "type": "text",
+                                    "enabled": true
+                                    }
+                                }
+                                },
+                                "required": true
+                            }
+                            ],
+                            "responses": {
+                            "200": {
+                                "description": "200",
+                                "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {
+                                    "type": "string",
+                                    "description": "id"
+                                    },
+                                    "name": {
+                                    "type": "string",
+                                    "description": "name"
+                                    },
+                                    "style": {
+                                    "type": "string",
+                                    "description": "style"
+                                    },
+                                    "balance": {
+                                    "type": "integer",
+                                    "format": "int32",
+                                    "description": "balance"
+                                    },
+                                    "currency": {
+                                    "type": "string",
+                                    "description": "currency"
+                                    },
+                                    "type": {
+                                    "type": "string",
+                                    "description": "type"
+                                    },
+                                    "minimum_balance": {
+                                    "type": "integer",
+                                    "format": "int32",
+                                    "description": "minimum_balance"
+                                    },
+                                    "maximum_balance": {
+                                    "type": "integer",
+                                    "format": "int32",
+                                    "description": "maximum_balance"
+                                    },
+                                    "round_up": {
+                                    "type": "boolean",
+                                    "description": "round_up"
+                                    },
+                                    "created": {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "description": "created"
+                                    },
+                                    "updated": {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "description": "updated"
+                                    },
+                                    "deleted": {
+                                    "type": "boolean",
+                                    "description": "deleted"
+                                    }
+                                }
+                                }
+                            }
+                            }
+                        }
+                        },
+                        "/transactions": {
+                        "get": {
+                            "summary": "ListTransactions",
+                            "description": "Returns a list of transactions on the user’s account.",
+                            "operationId": "ListTransactions",
+                            "parameters": [
+                            {
+                                "name": "account_id",
+                                "default": "{{account_id}}",
+                                "in": "query",
+                                "type": "string",
+                                "required": true
+                            },
+                            {
+                                "name": "limit",
+                                "default": "10",
+                                "in": "query",
+                                "type": "string",
+                                "required": true
+                            },
+                            {
+                                "name": "since",
+                                "default": "2018-07-31T00:00:00Z",
+                                "in": "query",
+                                "type": "string",
+                                "required": true
+                            },
+                            {
+                                "name": "before",
+                                "default": "2018-07-31T03:00:00Z",
+                                "in": "query",
+                                "type": "string",
+                                "required": true
+                            }
+                            ],
+                            "responses": {
+                            "200": {
+                                "description": "200",
+                                "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "transactions": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                        "id": {
+                                            "type": "string",
+                                            "description": "id"
+                                        },
+                                        "created": {
+                                            "type": "string",
+                                            "format": "date-time",
+                                            "description": "created"
+                                        },
+                                        "description": {
+                                            "type": "string",
+                                            "description": "description"
+                                        },
+                                        "amount": {
+                                            "type": "integer",
+                                            "format": "int32",
+                                            "description": "amount"
+                                        },
+                                        "fees": {
+                                            "type": "object",
+                                            "properties": {},
+                                            "description": "fees"
+                                        },
+                                        "currency": {
+                                            "type": "string",
+                                            "description": "currency"
+                                        },
+                                        "merchant": {
+                                            "type": "string",
+                                            "description": "merchant"
+                                        },
+                                        "notes": {
+                                            "type": "string",
+                                            "description": "notes"
+                                        },
+                                        "metadata": {
+                                            "type": "object",
+                                            "properties": {
+                                            "bacs_payment_id": {
+                                                "type": "string",
+                                                "description": "bacs_payment_id"
+                                            },
+                                            "bacs_record_id": {
+                                                "type": "string",
+                                                "description": "bacs_record_id"
+                                            },
+                                            "ledger_insertion_id": {
+                                                "type": "string",
+                                                "description": "ledger_insertion_id"
+                                            },
+                                            "notes": {
+                                                "type": "string",
+                                                "description": "notes"
+                                            },
+                                            "payday": {
+                                                "type": "string",
+                                                "description": "payday"
+                                            },
+                                            "bacs_direct_debit_instruction_id": {
+                                                "type": "string",
+                                                "description": "bacs_direct_debit_instruction_id"
+                                            },
+                                            "subscription_id": {
+                                                "type": "string",
+                                                "description": "subscription_id"
+                                            }
+                                            },
+                                            "description": "metadata"
+                                        },
+                                        "labels": {
+                                            "type": "string",
+                                            "description": "labels"
+                                        },
+                                        "account_balance": {
+                                            "type": "integer",
+                                            "format": "int32",
+                                            "description": "account_balance"
+                                        },
+                                        "attachments": {
+                                            "type": "array",
+                                            "items": {
+                                            "type": "string"
+                                            },
+                                            "description": "attachments"
+                                        },
+                                        "international": {
+                                            "type": "string",
+                                            "description": "international"
+                                        },
+                                        "category": {
+                                            "type": "string",
+                                            "description": "category"
+                                        },
+                                        "is_load": {
+                                            "type": "boolean",
+                                            "description": "is_load"
+                                        },
+                                        "settled": {
+                                            "type": "string",
+                                            "format": "date-time",
+                                            "description": "settled"
+                                        },
+                                        "local_amount": {
+                                            "type": "integer",
+                                            "format": "int32",
+                                            "description": "local_amount"
+                                        },
+                                        "local_currency": {
+                                            "type": "string",
+                                            "description": "local_currency"
+                                        },
+                                        "updated": {
+                                            "type": "string",
+                                            "format": "date-time",
+                                            "description": "updated"
+                                        },
+                                        "account_id": {
+                                            "type": "string",
+                                            "description": "account_id"
+                                        },
+                                        "user_id": {
+                                            "type": "string",
+                                            "description": "user_id"
+                                        },
+                                        "counterparty": {
+                                            "type": "object",
+                                            "properties": {
+                                            "account_number": {
+                                                "type": "string",
+                                                "description": "account_number"
+                                            },
+                                            "name": {
+                                                "type": "string",
+                                                "description": "name"
+                                            },
+                                            "service_user_number": {
+                                                "type": "string",
+                                                "description": "service_user_number"
+                                            },
+                                            "sort_code": {
+                                                "type": "string",
+                                                "description": "sort_code"
+                                            },
+                                            "user_id": {
+                                                "type": "string",
+                                                "description": "user_id"
+                                            }
+                                            },
+                                            "description": "counterparty"
+                                        },
+                                        "scheme": {
+                                            "type": "string",
+                                            "description": "scheme"
+                                        },
+                                        "dedupe_id": {
+                                            "type": "string",
+                                            "description": "dedupe_id"
+                                        },
+                                        "originator": {
+                                            "type": "boolean",
+                                            "description": "originator"
+                                        },
+                                        "include_in_spending": {
+                                            "type": "boolean",
+                                            "description": "include_in_spending"
+                                        },
+                                        "can_be_excluded_from_breakdown": {
+                                            "type": "boolean",
+                                            "description": "can_be_excluded_from_breakdown"
+                                        },
+                                        "can_be_made_subscription": {
+                                            "type": "boolean",
+                                            "description": "can_be_made_subscription"
+                                        },
+                                        "can_split_the_bill": {
+                                            "type": "boolean",
+                                            "description": "can_split_the_bill"
+                                        }
+                                        }
+                                    },
+                                    "description": "transactions"
+                                    }
+                                }
+                                }
+                            }
+                            }
+                        }
+                        },
+                        "/pots": {
+                        "get": {
+                            "summary": "ListPots",
+                            "description": "Returns a list of pots owned by the currently authorised user.",
+                            "operationId": "ListPots",
+                            "parameters": [],
+                            "responses": {
+                            "default": {
+                                "description": "default",
+                                "schema": {
+                                "type": "string"
+                                }
+                            }
+                            }
+                        }
+                        },
+                        "/pots/{pot_id}/withdraw": {
+                        "put": {
+                            "summary": "Withdraw from a pot",
+                            "description": "Move money from a pot owned by the currently authorised user into one of their accounts.",
+                            "operationId": "WithdrawFromAPot",
+                            "parameters": [
+                            {
+                                "name": "pot_id",
+                                "default": "{{pot_id}}",
+                                "in": "path",
+                                "type": "string",
+                                "required": true
+                            },
+                            {
+                                "name": "Content-Type",
+                                "in": "header",
+                                "required": true,
+                                "type": "string",
+                                "default": " application/x-www-form-urlencoded",
+                                "description": "Content-Type"
+                            },
+                            {
+                                "name": "body",
+                                "in": "body",
+                                "schema": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                    "key": {
+                                        "type": "string",
+                                        "description": "key"
+                                    },
+                                    "value": {
+                                        "type": "string",
+                                        "description": "value"
+                                    },
+                                    "description": {
+                                        "type": "string",
+                                        "description": "description"
+                                    },
+                                    "type": {
+                                        "type": "string",
+                                        "description": "type"
+                                    },
+                                    "enabled": {
+                                        "type": "boolean",
+                                        "description": "enabled"
+                                    }
+                                    },
+                                    "default": {
+                                    "key": "dedupe_id",
+                                    "value": "{{$guid}}",
+                                    "description": "A unique string used to de-duplicate deposits. Ensure this remains static between retries to ensure only one deposit is created.",
+                                    "type": "text",
+                                    "enabled": true
+                                    }
+                                }
+                                },
+                                "required": true
+                            }
+                            ],
+                            "responses": {
+                            "200": {
+                                "description": "200",
+                                "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {
+                                    "type": "string",
+                                    "description": "id"
+                                    },
+                                    "name": {
+                                    "type": "string",
+                                    "description": "name"
+                                    },
+                                    "style": {
+                                    "type": "string",
+                                    "description": "style"
+                                    },
+                                    "balance": {
+                                    "type": "integer",
+                                    "format": "int32",
+                                    "description": "balance"
+                                    },
+                                    "currency": {
+                                    "type": "string",
+                                    "description": "currency"
+                                    },
+                                    "type": {
+                                    "type": "string",
+                                    "description": "type"
+                                    },
+                                    "minimum_balance": {
+                                    "type": "integer",
+                                    "format": "int32",
+                                    "description": "minimum_balance"
+                                    },
+                                    "maximum_balance": {
+                                    "type": "integer",
+                                    "format": "int32",
+                                    "description": "maximum_balance"
+                                    },
+                                    "round_up": {
+                                    "type": "boolean",
+                                    "description": "round_up"
+                                    },
+                                    "created": {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "description": "created"
+                                    },
+                                    "updated": {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "description": "updated"
+                                    },
+                                    "deleted": {
+                                    "type": "boolean",
+                                    "description": "deleted"
+                                    }
+                                }
+                                }
+                            }
+                            }
+                        }
+                        },
+                        "/feed": {
+                        "post": {
+                            "summary": "FeedItem",
+                            "description": "Creates a new feed item on the user’s feed. These can be dismissed.",
+                            "operationId": "FeedItem",
+                            "parameters": [
+                            {
+                                "name": "Content-Type",
+                                "in": "header",
+                                "required": true,
+                                "type": "string",
+                                "default": " application/x-www-form-urlencoded",
+                                "description": "Content-Type"
+                            },
+                            {
+                                "name": "body",
+                                "in": "body",
+                                "schema": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                    "key": {
+                                        "type": "string",
+                                        "description": "key"
+                                    },
+                                    "value": {
+                                        "type": "string",
+                                        "description": "value"
+                                    },
+                                    "description": {
+                                        "type": "string",
+                                        "description": "description"
+                                    },
+                                    "type": {
+                                        "type": "string",
+                                        "description": "type"
+                                    },
+                                    "enabled": {
+                                        "type": "boolean",
+                                        "description": "enabled"
+                                    }
+                                    },
+                                    "default": {
+                                    "key": "url",
+                                    "value": "",
+                                    "description": "",
+                                    "type": "text",
+                                    "enabled": false
+                                    }
+                                }
+                                },
+                                "required": true
+                            }
+                            ],
+                            "responses": {
+                            "default": {
+                                "description": "default",
+                                "schema": {
+                                "type": "string"
+                                }
+                            }
+                            }
+                        }
+                        },
+                        "/oauth2/token": {
+                        "post": {
+                            "summary": "RefreshToken",
+                            "description": "RefreshToken",
+                            "operationId": "RefreshToken",
+                            "parameters": [
+                            {
+                                "name": "Content-Type",
+                                "in": "header",
+                                "required": true,
+                                "type": "string",
+                                "default": " application/x-www-form-urlencoded",
+                                "description": "Content-Type"
+                            },
+                            {
+                                "name": "body",
+                                "in": "body",
+                                "schema": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                    "key": {
+                                        "type": "string",
+                                        "description": "key"
+                                    },
+                                    "value": {
+                                        "type": "string",
+                                        "description": "value"
+                                    },
+                                    "description": {
+                                        "type": "string",
+                                        "description": "description"
+                                    },
+                                    "type": {
+                                        "type": "string",
+                                        "description": "type"
+                                    },
+                                    "enabled": {
+                                        "type": "boolean",
+                                        "description": "enabled"
+                                    }
+                                    },
+                                    "default": {
+                                    "key": "refresh_token",
+                                    "value": "",
+                                    "description": "The refresh token received along with the original access token.",
+                                    "type": "text",
+                                    "enabled": true
+                                    }
+                                }
+                                },
+                                "required": true
+                            }
+                            ],
+                            "responses": {
+                            "default": {
+                                "description": "default",
+                                "schema": {
+                                "type": "string"
+                                }
+                            }
+                            }
+                        }
+                        }
+                    },
+                    "definitions": {},
+                    "parameters": {},
+                    "responses": {},
+                    "tags": []
+                    }
+            },
+            "dependsOn": []
+        }
+    ]
+}
